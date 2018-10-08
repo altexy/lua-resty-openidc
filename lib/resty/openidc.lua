@@ -329,6 +329,12 @@ local function openidc_authorize(opts, session, target_url, prompt)
   session.data.last_authenticated = ngx.time()
   session:save()
 
+  local ajax_header = ngx.var.http_x_requested_with
+  local dont_redirect_ajax = opts.dont_redirect_ajax or false
+  if not dont_redirect_ajax and ajax_header and #ajax_header > 0 and ajax_header:lower() == "xmlhttprequest" then
+      ngx.header["Location"] = openidc_combine_uri(opts.discovery.authorization_endpoint, params)
+      return ngx.exit(ngx.HTTP_UNAUTHORIZED)
+  end
   -- redirect to the /authorization endpoint
   ngx.header["Cache-Control"] = "no-cache, no-store, max-age=0"
   return ngx.redirect(openidc_combine_uri(opts.discovery.authorization_endpoint, params))
