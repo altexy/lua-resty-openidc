@@ -62,7 +62,7 @@ local function base_checks()
   end)
 end
 
-describe("when using a statically configured RSA public key", function()
+describe("when using a statically configured RSA public key using secret opt", function()
   test_support.start_server({
     verify_opts = {
       secret = test_support.load("/spec/public_rsa_key.pem")
@@ -70,20 +70,56 @@ describe("when using a statically configured RSA public key", function()
   })
   teardown(test_support.stop_server)
   base_checks()
+  it("a deprecation warning is logged", function()
+    assert.error_log_contains("using deprecated option `opts.secret` for asymmetric key")
+  end)
 end)
 
-describe("when using a statically configured symmetric key for HMAC", function()
+describe("when using a statically configured RSA public key using public_key opt", function()
+  test_support.start_server({
+    verify_opts = {
+      public_key = test_support.load("/spec/public_rsa_key.pem")
+    }
+  })
+  teardown(test_support.stop_server)
+  base_checks()
+  it("no deprecation warning is logged", function()
+    assert.is_not.error_log_contains("using deprecated option `opts.secret` for asymmetric key")
+  end)
+end)
+
+describe("when using a statically configured symmetric key for HMAC using secret opt", function()
   test_support.start_server({
     verify_opts = {
       secret = "secret"
     },
-    jwt_verify_secret = "secret",
+    jwt_sign_secret = "secret",
     token_header = {
       alg = "HS256",
     }
   })
   teardown(test_support.stop_server)
   base_checks()
+  it("a deprecation warning is logged", function()
+    assert.error_log_contains("using deprecated option `opts.secret` for symmetric key")
+  end)
+end)
+
+describe("when using a statically configured symmetric key for HMAC using symmetric_key opt", function()
+  test_support.start_server({
+    verify_opts = {
+      symmetric_key = "secret"
+    },
+    jwt_sign_secret = "secret",
+    token_header = {
+      alg = "HS256",
+    }
+  })
+  teardown(test_support.stop_server)
+  base_checks()
+  it("no deprecation warning is logged", function()
+    assert.is_not.error_log_contains("using deprecated option `opts.secret` for symmetric key")
+  end)
 end)
 
 describe("when using a RSA key from a JWK that contains the x5c claim", function()
@@ -153,7 +189,7 @@ end)
 describe("when the access token has expired", function()
   test_support.start_server({
     verify_opts = {
-      secret = test_support.load("/spec/public_rsa_key.pem")
+      public_key = test_support.load("/spec/public_rsa_key.pem")
     },
     access_token = {
       exp = os.time() - 300
@@ -178,7 +214,7 @@ end)
 describe("when the access token has expired but slack is big enough", function()
   test_support.start_server({
     verify_opts = {
-      secret = test_support.load("/spec/public_rsa_key.pem"),
+      public_key = test_support.load("/spec/public_rsa_key.pem"),
       iat_slack = 400
     },
     access_token = {
@@ -199,7 +235,7 @@ end)
 describe("when the access token doesn't contain the exp claim at all", function()
   test_support.start_server({
     verify_opts = {
-      secret = test_support.load("/spec/public_rsa_key.pem"),
+      public_key = test_support.load("/spec/public_rsa_key.pem"),
     },
     remove_access_token_claims = { "exp" },
   })
@@ -215,24 +251,48 @@ describe("when the access token doesn't contain the exp claim at all", function(
 end)
 
 describe("when using a JWT not signed but using the 'none' alg", function()
-  test_support.start_server({
-    verify_opts = {
-      discovery = {
-        jwks_uri = "http://127.0.0.1/jwk",
-      }
-    },
-    jwk = test_support.load("/spec/jwks_with_two_keys.json"),
-  })
-  teardown(test_support.stop_server)
-  local jwt = test_support.self_signed_jwt({
-      exp = os.time() + 3600,
-  })
-  local _, status = http.request({
-      url = "http://127.0.0.1/verify_bearer_token",
-      headers = { authorization = "Bearer " .. jwt }
-  })
-  it("the token is valid", function()
-    assert.are.equals(204, status)
+  describe("and we are willing to accept the none alg", function()
+    test_support.start_server({
+      verify_opts = {
+        discovery = {
+          jwks_uri = "http://127.0.0.1/jwk",
+        },
+        accept_none_alg = true,
+      },
+      jwk = test_support.load("/spec/jwks_with_two_keys.json"),
+    })
+    teardown(test_support.stop_server)
+    local jwt = test_support.self_signed_jwt({
+        exp = os.time() + 3600,
+    })
+    local _, status = http.request({
+        url = "http://127.0.0.1/verify_bearer_token",
+        headers = { authorization = "Bearer " .. jwt }
+    })
+    it("the token is valid", function()
+      assert.are.equals(204, status)
+    end)
+  end)
+  describe("and we are not willing to accept the none alg", function()
+    test_support.start_server({
+      verify_opts = {
+        discovery = {
+          jwks_uri = "http://127.0.0.1/jwk",
+        },
+      },
+      jwk = test_support.load("/spec/jwks_with_two_keys.json"),
+    })
+    teardown(test_support.stop_server)
+    local jwt = test_support.self_signed_jwt({
+        exp = os.time() + 3600,
+    })
+    local _, status = http.request({
+        url = "http://127.0.0.1/verify_bearer_token",
+        headers = { authorization = "Bearer " .. jwt }
+    })
+    it("the token is invalid", function()
+      assert.are.equals(401, status)
+    end)
   end)
 end)
 
@@ -533,5 +593,89 @@ describe("when the token is signed by an RSA key but jwks_uri is empty", functio
   end)
   it("an error has been logged", function()
     assert.error_log_contains("Invalid token:.*jwks_uri is not present or not a string")
+  end)
+end)
+
+describe("when expecting an RSA signature but token uses HMAC", function()
+  test_support.start_server({
+    verify_opts = {
+      public_key = test_support.load("/spec/public_rsa_key.pem"),
+      token_signing_alg_values_expected = "RS256"
+    },
+    jwt_sign_secret = test_support.load("/spec/public_rsa_key.pem"),
+    token_header = {
+      alg = "HS256",
+    }
+  })
+  teardown(test_support.stop_server)
+  local jwt = test_support.trim(http.request("http://127.0.0.1/jwt"))
+  local _, status = http.request({
+    url = "http://127.0.0.1/verify_bearer_token",
+    headers = { authorization = "Bearer " .. jwt }
+  })
+  it("the response is invalid", function()
+    assert.are.equals(401, status)
+  end)
+  it("an error has been logged", function()
+    assert.error_log_contains("Invalid token:.*token is signed by unexpected algorithm \"HS256\"")
+  end)
+end)
+
+describe("when using a statically configured 4k RSA public key", function()
+  test_support.start_server({
+    verify_opts = {
+      public_key = test_support.load("/spec/public_longer_rsa_key.pem")
+    },
+    jwt_sign_secret = test_support.load("/spec/private_longer_rsa_key.pem")
+  })
+  teardown(test_support.stop_server)
+  base_checks()
+end)
+
+describe("when using a 4k RSA key from a JWK that contains the x5c claim", function()
+  test_support.start_server({
+    verify_opts = {
+      discovery = {
+        jwks_uri = "http://127.0.0.1/jwk",
+      }
+    },
+    jwk = test_support.load("/spec/longer_rsa_key_jwk_with_x5c.json"),
+    jwt_sign_secret = test_support.load("/spec/private_longer_rsa_key.pem")
+  })
+  teardown(test_support.stop_server)
+  base_checks()
+end)
+
+describe("when using a 4k RSA key from a JWK that doesn't contain the x5c claim", function()
+  test_support.start_server({
+    verify_opts = {
+      discovery = {
+        jwks_uri = "http://127.0.0.1/jwk",
+      }
+    },
+    jwk = test_support.load("/spec/longer_rsa_key_jwk_with_n_and_e.json"),
+    jwt_sign_secret = test_support.load("/spec/private_longer_rsa_key.pem")
+  })
+  teardown(test_support.stop_server)
+  base_checks()
+end)
+
+describe("when a request_decorator has been specified when calling the jwks endpoint", function()
+  test_support.start_server({
+    verify_opts = {
+      discovery = {
+        jwks_uri = "http://127.0.0.1/jwk",
+      },
+      decorate = true
+    },
+  })
+  teardown(test_support.stop_server)
+  local jwt = test_support.trim(http.request("http://127.0.0.1/jwt"))
+  http.request({
+    url = "http://127.0.0.1/verify_bearer_token",
+    headers = { authorization = "Bearer " .. jwt }
+  })
+  it("the request contains the additional parameter", function()
+    assert.error_log_contains('jwk uri_args:.*"foo"%s*:%s*"bar"')
   end)
 end)

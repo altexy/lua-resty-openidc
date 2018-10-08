@@ -1,3 +1,78 @@
+10/04/2018
+- use session.start instead of session.open; see #174; thanks @thomasleplus
+
+09/23/2018
+- added redirect_uri option that specifies an absolute URI for the
+  redirect URI. The existing redirect_uri_path and redirect_uri_scheme
+  options have been deprecated in favor of the new option.
+
+09/17/2018
+- added an optional "request decorator" option that can be used to augment
+  the HTTP requests when lua-resty-openidc talks to the discovery,
+  token or jwks endpoints.
+- add support for Windows Integrated Authentication (WIA) with Active Directory
+  Federation Services (AD FS) on Windows Server 2016 (or newer)
+
+09/15/2018
+- add an option to disable nonce parameter for broken OpenID Connect providers
+
+09/14/2018
+- deprecate `opt.secret` in favor of `opts.public_key` and `opts.symmetric_key`
+
+09/06/2018
+- bypass introspection cache on demand with introspection_cache_ignore; thanks @dmitriyblok
+
+07/18/2018
+- extract log function and log level constant to the module level to allow customization
+
+07/05/2018
+- add customized expiration time option for discovery and jwk cache; thanks @dhlin
+- release 1.6.1
+
+06/26/2018
+- signature verification failed for RSA keys of a length different
+  from 2048 bit when the JWK used a specific format; see #170
+
+06/19/2018
+- added post_logout_redirect_uri parameter that can be used to set
+  the target after logging out of the OpenID Connect Provider ; see #168; thanks @thomasleplus
+
+06/07/2018
+- refer to updated lua-resty-jwt that supports OpenSSL 1.1.x ; see: #162; thanks @cdbattags
+- release 1.6.0
+
+05/29/2018
+- when refreshing tokens the id token is now refreshed as well (if
+  included inside the token response); see #158; thanks @grrolland
+
+05/24/2018
+- add Cache-Control no-cache header to authorization requests to avoid replays of state/nonce;
+  see zmartzone/mod_auth_openidc#321
+
+04/28/2018
+- release 1.5.4
+
+04/27/2018
+- disabled support for "none" alg tokens introduced with 1.5.2 by default.
+  If you want to enable it, you will now have to explicitly set the accept_none_alg
+  option to true.
+- id tokens using a signature algorithm not announced by the discovery
+  endpoint are now rejected.
+- you can now specify which signing algorithm you expect a bearer token to
+  use in order to avoid being tricked into accepting a rogue token signed
+  with a symmetric key when expecting an asymmetric cypher.
+- added an option to reject tokens signed by an algorithm not supported by lua-resty-jwt
+
+04/19/2018
+- added support for passing bearer token as cookie
+- added support introspection interval
+- added support for passing request cookies on introspection call
+- added passing introspection endpoint authorization method into openidc_call_token_endpoint call 
+
+04/11/2018
+- bugfix rare case where OP public key is starting with 0x80 byte, and thus resulting in
+  systematic token signature verification error with message "too long"
+
 02/08/2018
 - added functions to manually request the invalidation of the caches; see #142
 

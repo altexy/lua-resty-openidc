@@ -1,4 +1,5 @@
 [![Build Status](https://travis-ci.org/zmartzone/lua-resty-openidc.svg?branch=master)](https://travis-ci.org/zmartzone/lua-resty-openidc)
+[<img width="184" height="96" align="right" src="http://openid.net/wordpress-content/uploads/2016/04/oid-l-certification-mark-l-rgb-150dpi-90mm@2x.png" alt="OpenID Certification">](https://openid.net/certification)
 
 # lua-resty-openidc
 
@@ -41,12 +42,16 @@ to install two extra pure-Lua dependencies that implement session management and
 Typically - when running as an OpenID Connect RP or an OAuth 2.0 server that consumes JWT
 access tokens - you'll also need to install the following dependency:
 
-- [`lua-resty-jwt`](https://github.com/SkyLothar/lua-resty-jwt)
+- [`lua-resty-jwt`](https://github.com/cdbattags/lua-resty-jwt)
 
 The `lua-resty-jwt` dependency above is *not* required when running as an OAuth 2.0 Resource Server (only) using remote
 introspection for access token validation.
 
 ## Installation
+
+If you're using `opm` execute the following:
+
+     opm install zmartzone/lua-resty-openidc
 
 If you're using `luarocks` execute the following:
 
@@ -54,6 +59,18 @@ If you're using `luarocks` execute the following:
 
 Otherwise copy `openidc.lua` somewhere in your `lua_package_path` under a directory named `resty`.
 If you are using [OpenResty](http://openresty.org/), the default location would be `/usr/local/openresty/lualib/resty`.
+
+
+## Support
+
+#### Community Support
+For generic questions, see the Wiki pages with Frequently Asked Questions at:  
+  [https://github.com/zmartzone/lua-resty-openidc/wiki](https://github.com/zmartzone/lua-resty-openidc/wiki)  
+Any questions/issues should go to issues tracker.
+
+#### Commercial Services
+For commercial Support contracts, Professional Services, Training and use-case specific support you can contact:  
+  [sales@zmartzone.eu](mailto:sales@zmartzone.eu)  
 
 
 ## Sample Configuration for Google+ Signin
@@ -91,10 +108,14 @@ http {
       access_by_lua_block {
 
           local opts = {
-             -- the full redirect URI must be protected by this script and becomes:
+             -- the full redirect URI must be protected by this script
+             redirect_uri = "https://MY_HOST_NAME/redirect_uri"
+             -- up until version 1.6.1 you'd specify
+             -- redirect_uri_path = "/redirect_uri",
+             -- and the redirect URI became
              -- ngx.var.scheme.."://"..ngx.var.http_host..opts.redirect_uri_path
-             -- unless the scheme is overridden using opts.redirect_uri_scheme or an X-Forwarded-Proto header in the incoming request
-             redirect_uri_path = "/redirect_uri",
+             -- unless the scheme was overridden using opts.redirect_uri_scheme or an X-Forwarded-Proto header in the incoming request
+
              discovery = "https://accounts.google.com/.well-known/openid-configuration",
              client_id = "<client_id>",
              client_secret = "<client_secret>"
@@ -106,9 +127,23 @@ http {
              --redirect_uri_scheme = "https",
              --logout_path = "/logout",
              --redirect_after_logout_uri = "/",
+             -- Where should the user be redirected after logout from the RP. This option overides any end_session_endpoint that the OP may have provided in the discovery response.
              --redirect_after_logout_with_id_token_hint = true,
+             -- Whether the redirection after logout should include the id token as an hint (if available). This option is used only if redirect_after_logout_uri is set.
+             --post_logout_redirect_uri = "https://www.zmartzone.eu/logoutSuccessful",
+             -- Where does the RP requests that the OP redirects the user after logout. If this option is set to a relative URI, it will be relative to the OP's logout endpoint, not the RP's.
              --token_endpoint_auth_method = ["client_secret_basic"|"client_secret_post"],
              --ssl_verify = "no"
+
+             --accept_none_alg = false
+             -- if your OpenID Connect Provider doesn't sign its id tokens
+             -- (uses the "none" signature algorithm) then set this to true.
+
+             --accept_unsupported_alg = true
+             -- if you want to reject tokens signed using an algorithm
+             -- not supported by lua-resty-jwt set this to false. If
+             -- you leave it unset or set it to true, the token signature will not be
+             -- verified when an unsupported algorithm is used.
 
              --renew_access_token_on_expiry = true
              -- whether this plugin shall try to silently renew the access token once it is expired if a refresh token is available.
@@ -131,12 +166,30 @@ http {
              -- timeout = 1000
              -- timeout = { connect = 500, send = 1000, read = 1000 }
 
+             --use_nonce = false
+             -- By default the authorization request includes the
+             -- nonce paramter. You can use this option to disable it
+             -- which may be necessary when talking to a broken OpenID
+             -- Connect provider that ignores the paramter as the
+             -- id_token will be rejected otherwise.
+
              -- Optional : use outgoing proxy to the OpenID Connect provider endpoints with the proxy_opts table : 
              -- this requires lua-resty-http >= 0.12
              -- proxy_opts = {
              --    http_proxy  = "http://<proxy_host>:<proxy_port>/",
              --    https_proxy = "http://<proxy_host>:<proxy_port>/"
              -- }
+
+             -- Optional : add decorator for HTTP request that is
+             -- applied when lua-resty-openidc talks to the OpenID Connect
+             -- provider directly. Can be used to provide extra HTTP headers
+             -- or add other similar behavior.
+             -- http_request_decorator = function(req)
+             --   local h = req.headers or {}
+             --   h[EXTRA_HEADER] = 'my extra header'
+             --   req.headers = h
+             --   return req
+             -- end,
 
           }
 
@@ -209,10 +262,12 @@ http {
           local opts = {
 
             -- 1. example of a shared secret for HS??? signature verification
-            --secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            --symmetric_key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            -- in versions up to 1.6.1 this option's key would have been secret
+            -- rather than symmetric_key
 
             -- 2. another example of a public cert for RS??? signature verification
-            secret = [[-----BEGIN CERTIFICATE-----
+            public_key = [[-----BEGIN CERTIFICATE-----
 MIIC0DCCAbigAwIBAgIGAVSbMZs1MA0GCSqGSIb3DQEBCwUAMCkxCzAJBgNVBAYTAlVTMQwwCgYD
 VQQKEwNibGExDDAKBgNVBAMTA2JsYTAeFw0xNjA1MTAxNTAzMjBaFw0yNjA1MDgxNTAzMjBaMCkx
 CzAJBgNVBAYTAlVTMQwwCgYDVQQKEwNibGExDDAKBgNVBAMTA2JsYTCCASIwDQYJKoZIhvcNAQEB
@@ -227,11 +282,34 @@ OcTuruRhqYOIJjiYZSgK/P0zUw1cjLwUJ9ig/O6ozYmof83974fygA/wK3SgFNEoFlTkTpOvZhVW
 9kLfCVA/CRBfJNKnz5PWBBxd/3XSEuP/fcWqKGTy7zZso4MTB0NKgWO4duGTgMyZbM4onJPyA0CY
 lAc5Csj0o5Q+oEhPUAVBIF07m4rd0OvAVPOCQ2NJhQSL1oWASbf+fg==
 -----END CERTIFICATE-----]],
+            -- in versions up to 1.6.1 this option's key would have been secret
+            -- rather than public_key
 
             -- 3. alternatively one can point to a so-called Discovery document that
             -- contains "jwks_uri" entry; the jwks endpoint must provide either an "x5c" entry
             -- or both the "n" modulus and "e" exponent entries for RSA signature verification
             -- discovery = "https://accounts.google.com/.well-known/openid-configuration",
+
+             -- the signature algorithm that you expect has been used;
+             -- can be a single string or a table.
+             -- You should set this for security reasons in order to
+             -- avoid accepting a token claiming to be signed by HMAC
+             -- using a public RSA key.
+             --token_signing_alg_values_expected = { "RS256" }
+
+             -- if you want to accept unsigned tokens (using the
+             -- "none" signature algorithm) then set this to true.
+             --accept_none_alg = false
+
+             -- if you want to reject tokens signed using an algorithm
+             -- not supported by lua-resty-jwt set this to false. If
+             -- you leave it unset, the token signature will not be
+             -- verified at all.
+             --accept_unsupported_alg = true
+
+             -- the expiration time in seconds for jwk cache, default is 1 day.
+             --jwk_expires_in = 24 * 60 * 60
+
           }
 
           -- call bearer_jwt_verify for OAuth 2.0 JWT validation
@@ -243,8 +321,10 @@ lAc5Csj0o5Q+oEhPUAVBIF07m4rd0OvAVPOCQ2NJhQSL1oWASbf+fg==
             ngx.exit(ngx.HTTP_FORBIDDEN)
           end
 
-          -- at this point res is a Lua table that represents the JSON
-          -- payload in the JWT token
+          -- at this point res is a Lua table that represents the (validated) JSON
+          -- payload in the JWT token; now we typically do not want to allow just any
+          -- token that was issued by the Authorization Server but we want to apply
+          -- some access restrictions via client IDs or scopes
 
           --if res.scope ~= "edit" then
           --  ngx.exit(ngx.HTTP_FORBIDDEN)
@@ -324,6 +404,108 @@ http {
   }
 }
 ```
+## Sample Configuration for passing bearer OAuth 2.0 access tokens as cookie
+
+Sample `nginx.conf` configuration for validating Bearer Access Tokens passed as cookie against a ORY/Hydra Authorization Server.
+
+```
+events {
+  worker_connections 128;
+}
+
+http {
+
+  lua_package_path '~/lua/?.lua;;';
+
+  resolver 8.8.8.8;
+
+  lua_ssl_trusted_certificate /opt/local/etc/openssl/cert.pem;
+  lua_ssl_verify_depth 5;
+
+  # cache for validation results
+  lua_shared_dict introspection 10m;
+
+  server {
+    listen 8080;
+
+    location /api {
+
+      access_by_lua '
+
+          local opts = {
+             introspection_endpoint="https://localhost:9031/oauth2/introspect",
+             client_id="admin",
+             client_secret="demo-password",
+             ssl_verify = "no",
+
+             -- Defines the interval in seconds after which a cached and introspected access token needs
+             -- to be refreshed by introspecting (and validating) it again against the Authorization Server.
+             -- When not defined the value is 0, which means it only expires after the `exp` (or alternative,
+             -- see introspection_expiry_claim) hint as returned by the Authorization Server
+             -- introspection_interval = 60, 
+  
+             -- Defines the way in which bearer OAuth 2.0 access tokens can be passed to this Resource Server. 
+             -- "cookie" as a cookie header called "PA.global" or using the name specified after ":"
+             -- "header" "Authorization: bearer" header
+             -- When not defined the default "Authorization: bearer" header is used
+             -- auth_accept_token_as = "cookie:PA",
+       
+             -- If header is used header field is Authorization
+             -- auth_accept_token_as_header_name = "cf-Access-Jwt-Assertion"
+
+             -- Authentication method for the OAuth 2.0 Authorization Server introspection endpoint,
+             -- Used to authenticate the client to the introspection endpoint with a client_id/client_secret
+             -- Defaults to "client_secret_post"
+             -- introspection_endpoint_auth_method = "client_secret_basic",
+
+             -- Specify the names of cookies separated by whitespace to pickup from the browser and send along on backchannel
+             -- calls to the OP and AS endpoints. 
+             -- When not defined, no such cookies are sent.
+             -- pass_cookies = "JSESSION"
+
+             -- Defaults to "exp" - Controls the TTL of the introspection cache
+             -- https://tools.ietf.org/html/rfc7662#section-2.2
+             -- introspection_expiry_claim = "exp"
+             
+             -- It may be necessary to force an introspection call for an access_token and ignore the existing cached
+             -- introspection results. If so you need to set set the introspection_cache_ignore option to true.
+             -- introspection_cache_ignore = true
+          }
+
+          -- call introspect for OAuth 2.0 Bearer Access Token validation
+          local res, err = require("resty.openidc").introspect(opts)
+
+          if err then
+            ngx.status = 403
+            ngx.say(err)
+            ngx.exit(ngx.HTTP_FORBIDDEN)
+          end
+
+          -- at this point res is a Lua table that represents the JSON
+          -- object returned from the introspection/validation endpoint
+
+          --if res.scope ~= "edit" then
+          --  ngx.exit(ngx.HTTP_FORBIDDEN)
+          --end
+
+          --if res.client_id ~= "ro_client" then
+          --  ngx.exit(ngx.HTTP_FORBIDDEN)
+          --end
+      ';
+    }
+  }
+}
+```
+
+## Logging
+
+Logging can be customized, including using custom logger and remapping OpenIDC's
+default log levels, e.g:
+
+```lua
+local openidc = require("resty.openidc")
+openidc.set_logging(nil, { DEBUG = ngx.INFO })
+```
 
 ## Running Tests
 
@@ -346,19 +528,9 @@ $ docker run -it --rm -e coverage=t lua-resty-openidc/test:latest
 ```
 
 as the second command
-
-## Support
-
-See the Wiki pages with Frequently Asked Questions at:
-  https://github.com/zmartzone/lua-resty-openidc/wiki
-For commercial support and consultancy you can contact:
-  [info@zmartzone.eu](mailto:info@zmartzone.eu)
-
-Any questions/issues should go to issues tracker or the primary author
-[hans.zandbelt@zmartzone.eu](mailto:hans.zandbelt@zmartzone.eu)
-
+  
 Disclaimer
 ----------
 
 *This software is open sourced by ZmartZone IAM. For commercial support
-you can contact [ZmartZone IAM](https://www.zmartzone.eu) as described above.*
+you can contact [ZmartZone IAM](https://www.zmartzone.eu) as described above in the [Support](#support) section.*

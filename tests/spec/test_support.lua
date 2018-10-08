@@ -5,7 +5,7 @@ local serpent = require("serpent")
 local test_support = {}
 
 local DEFAULT_OIDC_CONFIG = {
-   redirect_uri_path = "/default/redirect_uri",
+   redirect_uri = "http://localhost/default/redirect_uri",
    logout_path = "/default/logout",
    discovery = {
       authorization_endpoint = "http://127.0.0.1/authorize",
@@ -14,6 +14,7 @@ local DEFAULT_OIDC_CONFIG = {
       issuer = "http://127.0.0.1/",
       jwks_uri = "http://127.0.0.1/jwk",
       userinfo_endpoint = "http://127.0.0.1/user-info",
+      id_token_signing_alg_values_supported = { "RS256", "HS256" },
    },
    client_id = "client_id",
    client_secret = "client_secret",
@@ -61,7 +62,7 @@ function test_support.self_signed_jwt(payload, alg, signature)
   return header .. "." .. b64url(payload) .. "." .. (signature or "")
 end
 
-local DEFAULT_JWT_VERIFY_SECRET = test_support.load("/spec/private_rsa_key.pem")
+local DEFAULT_JWT_SIGN_SECRET = test_support.load("/spec/private_rsa_key.pem")
 
 local DEFAULT_JWK = test_support.load("/spec/rsa_key_jwk_with_x5c.json")
 
@@ -81,6 +82,8 @@ local DEFAULT_REFRESHING_TOKEN_FAILS = "false"
 local DEFAULT_FAKE_ACCESS_TOKEN_SIGNATURE = "false"
 local DEFAULT_FAKE_ID_TOKEN_SIGNATURE = "false"
 local DEFAULT_BREAK_ID_TOKEN_SIGNATURE = "false"
+local DEFAULT_NONE_ALG_ID_TOKEN_SIGNATURE = "false"
+local DEFAULT_REFRESH_RESPONSE_CONTAINS_ID_TOKEN = "true"
 
 local DEFAULT_UNAUTH_ACTION = "nil"
 
@@ -100,9 +103,8 @@ http {
     lua_package_path '~/lua/?.lua;;';
     lua_shared_dict discovery 1m;
     init_by_lua_block {
-        jwks = [=[JWK]=]
-        secret = [=[
-JWT_VERIFY_SECRET]=]
+        sign_secret = [=[
+JWT_SIGN_SECRET]=]
         if os.getenv('coverage') then
           require("luacov.runner")("/spec/luacov/settings.luacov")
         end
@@ -113,6 +115,9 @@ JWT_VERIFY_SECRET]=]
             ngx.sleep(delay_response / 1000)
           end
         end
+        b64url = function(s)
+          return ngx.encode_base64(cjson.encode(s)):gsub('+','-'):gsub('/','_')
+        end
         create_jwt = function(payload, fake_signature)
           if not fake_signature then
             local jwt_content = {
@@ -120,11 +125,8 @@ JWT_VERIFY_SECRET]=]
               payload = payload
             }
             local jwt = require "resty.jwt"
-            return jwt:sign(secret, jwt_content)
+            return jwt:sign(sign_secret, jwt_content)
           else
-            local function b64url(s)
-              return ngx.encode_base64(cjson.encode(s)):gsub('+','-'):gsub('/','_')
-            end
             local header = b64url({
                 typ = "JWT",
                 alg = "AB256"
@@ -132,6 +134,17 @@ JWT_VERIFY_SECRET]=]
             return header .. "." .. b64url(payload) .. ".NOT_A_VALID_SIGNATURE"
           end
         end
+        query_decorator = function(req)
+          req.query = "foo=bar"
+          return req
+        end
+        body_decorator = function(req)
+          local body = ngx.decode_args(req.body)
+          body.foo = "bar"
+          req.body = ngx.encode_args(body)
+          return req
+        end
+        jwks = [=[JWK]=]
     }
 
     resolver      8.8.8.8;
@@ -154,6 +167,7 @@ JWT_VERIFY_SECRET]=]
 
         location /jwk {
             content_by_lua_block {
+                ngx.log(ngx.ERR, "jwk uri_args: " .. cjson.encode(ngx.req.get_uri_args()))
                 ngx.header.content_type = 'application/json;charset=UTF-8'
                 delay(JWK_DELAY_RESPONSE)
                 ngx.say(jwks)
@@ -167,7 +181,9 @@ JWT_VERIFY_SECRET]=]
         location /default {
             access_by_lua_block {
               local opts = OIDC_CONFIG
-              local oidc = require "resty.openidc"
+              if opts.decorate then
+                opts.http_request_decorator = opts.decorate == "body" and body_decorator or query_decorator
+              end
               local res, err, target, session = oidc.authenticate(opts, nil, UNAUTH_ACTION)
               if err then
                 ngx.status = 401
@@ -183,6 +199,28 @@ JWT_VERIFY_SECRET]=]
             proxy_pass http://localhost:80;
         }
 
+        location /default-absolute {
+            access_by_lua_block {
+              local opts = OIDC_CONFIG
+              if opts.decorate then
+                opts.http_request_decorator = opts.decorate == "body" and body_decorator or query_decorator
+              end
+              local uri = ngx.var.scheme .. "://" .. ngx.var.host .. ngx.var.request_uri
+              local res, err, target, session = oidc.authenticate(opts, uri, UNAUTH_ACTION)
+              if err then
+                ngx.status = 401
+                ngx.log(ngx.ERR, "authenticate failed: " .. err)
+                ngx.say("authenticate failed: " .. err)
+                ngx.exit(ngx.HTTP_UNAUTHORIZED)
+              end
+              if not res or not res.access_token then
+                ngx.log(ngx.ERR, "authenticate didn't return any access token")
+              end
+            }
+            rewrite ^/default-absolute/(.*)$ /$1  break;
+            proxy_pass http://localhost:80;
+        }
+
         location /token {
             content_by_lua_block {
                 ngx.req.read_body()
@@ -190,8 +228,13 @@ JWT_VERIFY_SECRET]=]
                 local auth = ngx.req.get_headers()["Authorization"]
                 ngx.log(ngx.ERR, "token authorization header: " .. (auth and auth or ""))
                 ngx.header.content_type = 'application/json;charset=UTF-8'
-                local id_token = ID_TOKEN
                 local args = ngx.req.get_post_args()
+                local id_token
+                if args.grant_type == "authorization_code" then
+                  id_token = ID_TOKEN
+                else
+                  id_token = REFRESH_ID_TOKEN
+                end
                 local access_token = "a_token"
                 local refresh_token = "r_token"
                 if args.grant_type == "authorization_code" then
@@ -207,16 +250,27 @@ JWT_VERIFY_SECRET]=]
                   access_token = access_token .. "2"
                   refresh_token = refresh_token .. "2"
                 end
-                local jwt_token = create_jwt(id_token, FAKE_ID_TOKEN_SIGNATURE)
-                if BREAK_ID_TOKEN_SIGNATURE then
-                  jwt_token = jwt_token:sub(1, -6) .. "XXXXX"
+                local jwt_token
+                if NONE_ALG_ID_TOKEN_SIGNATURE then
+                  local header = b64url({
+                      typ = "JWT",
+                      alg = "none"
+                  })
+                  jwt_token = header .. "." .. b64url(id_token) .. "."
+                else
+                  jwt_token = create_jwt(id_token, FAKE_ID_TOKEN_SIGNATURE)
+                  if BREAK_ID_TOKEN_SIGNATURE then
+                    jwt_token = jwt_token:sub(1, -6) .. "XXXXX"
+                  end
                 end
                 local token_response = {
                   access_token = access_token,
                   expires_in = TOKEN_RESPONSE_EXPIRES_IN,
                   refresh_token = TOKEN_RESPONSE_CONTAINS_REFRESH_TOKEN and refresh_token or nil,
-                  id_token = jwt_token
                 }
+                if args.grant_type == "authorization_code" or REFRESH_RESPONSE_CONTAINS_ID_TOKEN then
+                  token_response.id_token = jwt_token
+                end
                 delay(TOKEN_DELAY_RESPONSE)
                 ngx.say(cjson.encode(token_response))
             }
@@ -224,7 +278,11 @@ JWT_VERIFY_SECRET]=]
 
         location /verify_bearer_token {
             content_by_lua_block {
-                local json, err, token = oidc.bearer_jwt_verify(VERIFY_OPTS)
+                local opts = VERIFY_OPTS
+                if opts.decorate then
+                  opts.http_request_decorator = query_decorator
+                end
+                local json, err, token = oidc.bearer_jwt_verify(opts)
                 if err then
                   ngx.status = 401
                   ngx.log(ngx.ERR, "Invalid token: " .. err)
@@ -237,6 +295,7 @@ JWT_VERIFY_SECRET]=]
 
         location /discovery {
             content_by_lua_block {
+                ngx.log(ngx.ERR, "discovery uri_args: " .. cjson.encode(ngx.req.get_uri_args()))
                 ngx.header.content_type = 'application/json;charset=UTF-8'
                 delay(DISCOVERY_DELAY_RESPONSE)
                 ngx.say([=[{
@@ -265,6 +324,17 @@ JWT_VERIFY_SECRET]=]
                 ngx.log(ngx.ERR, "Received introspection request: " .. ngx.req.get_body_data())
                 local auth = ngx.req.get_headers()["Authorization"]
                 ngx.log(ngx.ERR, "introspection authorization header: " .. (auth and auth or ""))
+                local cookie = ngx.req.get_headers()["Cookie"]
+                if cookie then
+                  if type(cookie) == "string" then
+                    cookie = { cookie }
+                  end
+                  for _, c in ipairs(cookie) do
+                    ngx.log(ngx.ERR, "cookie " .. c .. " in introspection call")
+                  end
+                else
+                  ngx.log(ngx.ERR, "no cookie in introspection call")
+                end
                 ngx.header.content_type = 'application/json;charset=UTF-8'
                 delay(INTROSPECTION_DELAY_RESPONSE)
                 ngx.say(cjson.encode(INTROSPECTION_RESPONSE))
@@ -273,7 +343,11 @@ JWT_VERIFY_SECRET]=]
 
         location /introspect {
             content_by_lua_block {
-                local json, err = oidc.introspect(INTROSPECTION_OPTS)
+                local opts = INTROSPECTION_OPTS
+                if opts.decorate then
+                  opts.http_request_decorator = body_decorator
+                end
+                local json, err = oidc.introspect(opts)
                 if err then
                   ngx.status = 401
                   ngx.log(ngx.ERR, "Introspection error: " .. err)
@@ -326,6 +400,7 @@ local function write_config(out, custom_config)
   custom_config = custom_config or {}
   local oidc_config = merge(merge({}, DEFAULT_OIDC_CONFIG), custom_config["oidc_opts"] or {})
   local id_token = merge(merge({}, DEFAULT_ID_TOKEN), custom_config["id_token"] or {})
+  local refresh_id_token = merge({}, id_token)
   local verify_opts = merge(merge({}, DEFAULT_VERIFY_OPTS), custom_config["verify_opts"] or {})
   local access_token = merge(merge({}, DEFAULT_ACCESS_TOKEN), custom_config["access_token"] or {})
   local token_header = merge(merge({}, DEFAULT_TOKEN_HEADER), custom_config["token_header"] or {})
@@ -338,9 +413,13 @@ local function write_config(out, custom_config)
   local token_response_contains_refresh_token = custom_config["token_response_contains_refresh_token"]
     or DEFAULT_TOKEN_RESPONSE_CONTAINS_REFRESH_TOKEN
   local refreshing_token_fails = custom_config["refreshing_token_fails"] or DEFAULT_REFRESHING_TOKEN_FAILS
+  local refresh_response_contains_id_token = custom_config["refresh_response_contains_id_token"] or DEFAULT_REFRESH_RESPONSE_CONTAINS_ID_TOKEN
   local access_token_opts = merge(merge({}, DEFAULT_OIDC_CONFIG), custom_config["access_token_opts"] or {})
   for _, k in ipairs(custom_config["remove_id_token_claims"] or {}) do
     id_token[k] = nil
+  end
+  for _, k in ipairs(custom_config["remove_refresh_id_token_claims"] or {}) do
+    refresh_id_token[k] = nil
   end
   for _, k in ipairs(custom_config["remove_access_token_claims"] or {}) do
     access_token[k] = nil
@@ -351,16 +430,20 @@ local function write_config(out, custom_config)
   for _, k in ipairs(custom_config["remove_introspection_claims"] or {}) do
     introspection_response[k] = nil
   end
+  for _, k in ipairs(custom_config["remove_oidc_config_keys"] or {}) do
+    oidc_config[k] = nil
+  end
   local config = DEFAULT_CONFIG_TEMPLATE
     :gsub("OIDC_CONFIG", serpent.block(oidc_config, {comment = false }))
     :gsub("TOKEN_HEADER", serpent.block(token_header, {comment = false }))
-    :gsub("JWT_VERIFY_SECRET", custom_config["jwt_verify_secret"] or DEFAULT_JWT_VERIFY_SECRET)
+    :gsub("JWT_SIGN_SECRET", custom_config["jwt_sign_secret"] or DEFAULT_JWT_SIGN_SECRET)
     :gsub("VERIFY_OPTS", serpent.block(verify_opts, {comment = false }))
     :gsub("INTROSPECTION_RESPONSE", serpent.block(introspection_response, {comment = false }))
     :gsub("INTROSPECTION_OPTS", serpent.block(introspection_opts, {comment = false }))
     :gsub("TOKEN_RESPONSE_EXPIRES_IN", token_response_expires_in)
     :gsub("TOKEN_RESPONSE_CONTAINS_REFRESH_TOKEN", token_response_contains_refresh_token)
     :gsub("REFRESHING_TOKEN_FAILS", refreshing_token_fails)
+    :gsub("REFRESH_RESPONSE_CONTAINS_ID_TOKEN", refresh_response_contains_id_token)
     :gsub("ACCESS_TOKEN_OPTS", serpent.block(access_token_opts, {comment = false }))
     :gsub("JWK_DELAY_RESPONSE", ((custom_config["delay_response"] or {}).jwk or DEFAULT_DELAY_RESPONSE))
     :gsub("TOKEN_DELAY_RESPONSE", ((custom_config["delay_response"] or {}).token or DEFAULT_DELAY_RESPONSE))
@@ -372,6 +455,8 @@ local function write_config(out, custom_config)
     :gsub("FAKE_ACCESS_TOKEN_SIGNATURE", custom_config["fake_access_token_signature"] or DEFAULT_FAKE_ACCESS_TOKEN_SIGNATURE)
     :gsub("FAKE_ID_TOKEN_SIGNATURE", custom_config["fake_id_token_signature"] or DEFAULT_FAKE_ID_TOKEN_SIGNATURE)
     :gsub("BREAK_ID_TOKEN_SIGNATURE", custom_config["break_id_token_signature"] or DEFAULT_BREAK_ID_TOKEN_SIGNATURE)
+    :gsub("NONE_ALG_ID_TOKEN_SIGNATURE", custom_config["none_alg_id_token_signature"] or DEFAULT_NONE_ALG_ID_TOKEN_SIGNATURE)
+    :gsub("REFRESH_ID_TOKEN", serpent.block(refresh_id_token, {comment = false }))
     :gsub("ID_TOKEN", serpent.block(id_token, {comment = false }))
     :gsub("ACCESS_TOKEN", serpent.block(access_token, {comment = false }))
     :gsub("UNAUTH_ACTION", custom_config["unauth_action"] and ('"' .. custom_config["unauth_action"] .. '"') or DEFAULT_UNAUTH_ACTION)
@@ -381,11 +466,12 @@ end
 -- starts a server instance with some customizations of the configuration.
 -- expects custom_config to be a table with:
 -- - oidc_opts is a table containing options that are accepted by oidc.authenticate
+-- - remove_oidc_config_keys is an array of keys to remove from the oidc configuration
 -- - id_token is a table containing id_token claims
 -- - remove_id_token_claims is an array of claims to remove from the id_token
 -- - verify_opts is a table containing options that are accepted by oidc.bearer_jwt_verify
 -- - jwt_signature_alg algorithm to use for signing JWTs
--- - jwt_verify_secret the secret to use when verifying the secret
+-- - jwt_sign_secret the secret to use when signing JWTs
 -- - access_token is a table containing claims for the access token provided by /jwt
 -- - token_header is a table containing claims for the header used by /jwt
 --   as well as the id token
@@ -410,6 +496,7 @@ end
 --   id_token
 -- - unauth_action value to pass as unauth_action parameter to authenticate
 -- - break_id_token_signature whether to create an id token with an invalid signature
+-- - none_alg_id_token_signature whether to use the "none" alg when signing the id token
 function test_support.start_server(custom_config)
   assert(os.execute("rm -rf /tmp/server"), "failed to remove old server dir")
   assert(os.execute("mkdir -p /tmp/server/conf"), "failed to create server dir")

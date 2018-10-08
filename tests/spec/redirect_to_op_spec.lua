@@ -13,11 +13,14 @@ describe("when accessing the protected resource without token", function()
     assert.are.equals(302, status)
     assert.truthy(string.match(headers["location"], "http://127.0.0.1/authorize%?.*client_id=client_id.*"))
   end)
+  it("HTTP Caching is disabled", function()
+    assert.are.equals("no-cache, no-store, max-age=0", headers["cache-control"])
+  end)
   it("requests the authorization code grant flow", function()
     assert.truthy(string.match(headers["location"], ".*response_type=code.*"))
   end)
   it("uses the configured redirect uri", function()
-    local redir_escaped = test_support.urlescape_for_regex("http://127.0.0.1/default/redirect_uri")
+    local redir_escaped = test_support.urlescape_for_regex("http://localhost/default/redirect_uri")
     -- lower as url.escape uses %2f for a slash, openidc uses %2F
     assert.truthy(string.match(string.lower(headers["location"]),
                                ".*redirect_uri=" .. string.lower(redir_escaped) .. ".*"))
@@ -245,8 +248,13 @@ describe("when discovery endpoint doesn't return proper JSON", function()
   end)
 end)
 
-describe("when accessing the protected resource without token and x-forwarded headers exist", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and x-forwarded headers exist", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -264,11 +272,13 @@ describe("when accessing the protected resource without token and x-forwarded he
   end)
 end)
 
-describe("when redir scheme is configured explicitly", function()
+describe("when redir scheme and redirect_uri_path are configured explicitly", function()
   test_support.start_server({
     oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
       redirect_uri_scheme = 'https',
     },
+    remove_oidc_config_keys = { 'redirect_uri' },
   })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
@@ -283,8 +293,13 @@ describe("when redir scheme is configured explicitly", function()
   end)
 end)
 
-describe("when accessing the protected resource without token and x-forwarded-host contains a comma separated list", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and x-forwarded-host contains a comma separated list", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -302,8 +317,13 @@ describe("when accessing the protected resource without token and x-forwarded-ho
   end)
 end)
 
-describe("when accessing the protected resource without token and x-forwarded-* contain whitespace", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and x-forwarded-* contain whitespace", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -321,8 +341,13 @@ describe("when accessing the protected resource without token and x-forwarded-* 
   end)
 end)
 
-describe("when accessing the protected resource without token and multiple x-forwarded-host headers", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and multiple x-forwarded-host headers", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   -- the http module doesn't support specifying multiple headers
   local r = io.popen("curl -H 'X-Forwarded-Host: example.org' -H 'X-Forwarded-Host: example.com'"
@@ -337,8 +362,13 @@ describe("when accessing the protected resource without token and multiple x-for
   end)
 end)
 
-describe("when accessing the protected resource without token and a forwarded header exists", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and a forwarded header exists", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -355,8 +385,13 @@ describe("when accessing the protected resource without token and a forwarded he
   end)
 end)
 
-describe("when accessing the protected resource without token and a forwarded header values are quoted", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and a forwarded header values are quoted", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -373,8 +408,13 @@ describe("when accessing the protected resource without token and a forwarded he
   end)
 end)
 
-describe("when accessing the protected resource without token and a forwarded header has multiple fields", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and a forwarded header has multiple fields", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   local _, status, headers = http.request({
     url = "http://127.0.0.1/default/t",
@@ -391,8 +431,13 @@ describe("when accessing the protected resource without token and a forwarded he
   end)
 end)
 
-describe("when accessing the protected resource without token and multiple forwarded headers", function()
-  test_support.start_server()
+describe("when accessing the protected resource without token, redirect_uri_path is used and multiple forwarded headers", function()
+  test_support.start_server({
+    oidc_opts = {
+      redirect_uri_path = '/default/redirect_uri',
+    },
+    remove_oidc_config_keys = { 'redirect_uri' },
+  })
   teardown(test_support.stop_server)
   -- the http module doesn't support specifying multiple headers
   local r = io.popen("curl -H 'Forwarded: host=example.org' -H 'Forwarded: host=example.com'"
@@ -407,3 +452,43 @@ describe("when accessing the protected resource without token and multiple forwa
   end)
 end)
 
+describe("when explicitly setting the use_nonce option to true", function()
+  test_support.start_server({oidc_opts = {use_nonce = true}})
+  teardown(test_support.stop_server)
+  local _, status, headers = http.request({
+    url = "http://127.0.0.1/default/t",
+    redirect = false
+  })
+  it("uses a nonce parameter", function()
+    assert.truthy(string.match(headers["location"], ".*nonce=.*"))
+  end)
+end)
+
+describe("when setting the use_nonce option to false", function()
+  test_support.start_server({oidc_opts = {use_nonce = false}})
+  teardown(test_support.stop_server)
+  local _, status, headers = http.request({
+    url = "http://127.0.0.1/default/t",
+    redirect = false
+  })
+  it("doesn't use a nonce parameter", function()
+    assert.falsy(string.match(headers["location"], ".*nonce=.*"))
+  end)
+end)
+
+describe("when a request_decorator has been specified when calling the discovery endpoint", function()
+  test_support.start_server({
+    oidc_opts = {
+      discovery = "http://127.0.0.1/discovery",
+      decorate = "query"
+    },
+  })
+  teardown(test_support.stop_server)
+  http.request({
+    url = "http://127.0.0.1/default/t",
+    redirect = false
+  })
+  it("the request contains the additional parameter", function()
+    assert.error_log_contains('discovery uri_args:.*"foo"%s*:%s*"bar"')
+  end)
+end)
